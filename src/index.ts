@@ -19,6 +19,7 @@ import { App } from './app';
 import { MeshCollision, loadVoxelCollision } from './collision';
 import type { Collision } from './collision';
 import { observe } from './core/observe';
+import { registerInterlinkBridge } from './interlink-bridge';
 import { initLocalization } from './localization';
 import { importSettings } from './settings';
 import type { Config, Global } from './types';
@@ -31,13 +32,14 @@ const loadGsplat = async (app: AppBase, config: Config, progressCallback: (progr
     const { contents, contentUrl } = config;
     const c = contents as unknown as ArrayBuffer;
     const filename = new URL(contentUrl, location.href).pathname.split('/').pop();
-    const data = filename.toLowerCase() === 'meta.json' ? await (await contents).json() : undefined;
+    // matches both 'meta.json' (unbundled SOG) and 'lod-meta.json' (streamed SOG)
+    const data = filename.toLowerCase().endsWith('meta.json') ? await (await contents).json() : undefined;
     const asset = new Asset(filename, 'gsplat', { url: contentUrl, filename, contents: c }, data);
 
     return new Promise<Entity>((resolve, reject) => {
         asset.on('load', () => {
             const entity = new Entity('gsplat');
-            entity.setLocalEulerAngles(0, 0, 180);
+            entity.setLocalEulerAngles(...(config.contentRotation ?? [0, 0, 180]));
             entity.addComponent('gsplat', {
                 unified: true,
                 asset
@@ -238,7 +240,7 @@ const main = async (canvas: HTMLCanvasElement, settingsJson: any, config: Config
         isFullscreen: false,
         controlsHidden: false,
         showAnnotations: localStorage.getItem('showAnnotations') !== 'false',
-        gamingControls: localStorage.getItem('gamingControls') === 'true'
+        gamingControls: config.nogaming ? false : localStorage.getItem('gamingControls') === 'true'
     });
 
     const global: Global = {
@@ -320,7 +322,14 @@ const main = async (canvas: HTMLCanvasElement, settingsJson: any, config: Config
     }
 
     // Create the viewer
-    return new Viewer(global, gsplatLoad, skyboxLoad, collisionLoad);
+    const viewer = new Viewer(global, gsplatLoad, skyboxLoad, collisionLoad);
+
+    // Interlink guided-tour camera-sync bridge
+    if (config.interlink?.splatId) {
+        registerInterlinkBridge(global, viewer);
+    }
+
+    return viewer;
 };
 
 console.log(`SuperSplat Viewer v${appVersion} | Engine v${engineVersion} (${engineRevision})`);

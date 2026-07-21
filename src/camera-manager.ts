@@ -59,6 +59,21 @@ class CameraManager {
     // visible instantly.
     snap: () => void;
 
+    // Remote camera drive (interlink bridge): animated flight to a pose,
+    // damped follow toward a continuously-refreshed pose, and cancellation.
+    // While a remote drive is active it bypasses controller output; any
+    // local input interrupt cancels it so the user always wins.
+    flyTo: (position: Vec3, target: Vec3, durationMs?: number) => void;
+
+    easeTo: (position: Vec3, target: Vec3) => void;
+
+    cancelRemote: () => void;
+
+    // True while a damped remote follow (easeTo) is active. The bridge
+    // suppresses outbound pose emission during easing so the eased copy
+    // doesn't echo back to the guide; fly-to intentionally still emits.
+    remoteEasing = false;
+
     // holds the camera state
     camera = new Camera();
 
@@ -159,8 +174,69 @@ class CameraManager {
             global.app.renderNextFrame = true;
         };
 
+        // remote drive state (interlink bridge)
+        let remoteTween: { from: Camera; to: Camera; elapsed: number; duration: number } | null = null;
+        let remoteGoal: Camera | null = null;
+
+        const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+
+        this.flyTo = (position: Vec3, targetPos: Vec3, durationMs = 1200) => {
+            remoteGoal = null;
+            this.remoteEasing = false;
+            const to = new Camera(this.camera);
+            to.look(position, targetPos);
+            remoteTween = {
+                from: new Camera(this.camera),
+                to,
+                elapsed: 0,
+                duration: Math.max(0.001, durationMs / 1000)
+            };
+        };
+
+        this.easeTo = (position: Vec3, targetPos: Vec3) => {
+            remoteTween = null;
+            const goal = remoteGoal ?? new Camera(this.camera);
+            goal.look(position, targetPos);
+            remoteGoal = goal;
+            this.remoteEasing = true;
+        };
+
+        this.cancelRemote = () => {
+            if (remoteTween || remoteGoal) {
+                remoteTween = null;
+                remoteGoal = null;
+                this.remoteEasing = false;
+                this.snap();
+            }
+        };
+
         // application update
         this.update = (deltaTime: number, frame: CameraFrame) => {
+
+            // remote drive overrides controller output while active
+            if (remoteTween) {
+                remoteTween.elapsed += deltaTime;
+                const t = Math.min(1, remoteTween.elapsed / remoteTween.duration);
+                this.camera.lerp(remoteTween.from, remoteTween.to, easeInOutCubic(t));
+                global.app.renderNextFrame = true;
+                if (t >= 1) {
+                    remoteTween = null;
+                    this.snap();
+                }
+                return;
+            }
+            if (remoteGoal) {
+                const f = 1 - Math.exp(-deltaTime * 4);
+                tmpCamera.copy(this.camera);
+                this.camera.lerp(tmpCamera, remoteGoal, f);
+                global.app.renderNextFrame = true;
+                if (this.camera.position.distance(remoteGoal.position) < 0.005) {
+                    remoteGoal = null;
+                    this.remoteEasing = false;
+                    this.snap();
+                }
+                return;
+            }
 
             // use dt of 0 if animation is paused
             const dt = state.cameraMode === 'anim' && state.animationPaused ? 0 : deltaTime;
@@ -195,6 +271,10 @@ class CameraManager {
 
         // handle input events
         events.on('inputEvent', (eventName) => {
+            // local input always wins over a remote (bridge-driven) camera
+            if (eventName === 'interrupt') {
+                this.cancelRemote();
+            }
             switch (eventName) {
                 case 'frame':
                     events.fire('orbitTarget:clear');
@@ -262,6 +342,9 @@ class CameraManager {
 
         // handle camera mode switching
         events.on('cameraMode:changed', (value: CameraMode, prev: CameraMode) => {
+            remoteTween = null;
+            remoteGoal = null;
+            this.remoteEasing = false;
             sourcesByMode[prev]?.cancel();
 
             // snapshot the current pose before any controller mutation
@@ -323,6 +406,7 @@ class CameraManager {
 
         // tap-to-navigate: start auto-driving the active mode toward a picked position
         events.on('navigateTo', (position: Vec3, normal: Vec3, speedMul = 1) => {
+            this.cancelRemote();
             const source = sourcesByMode[state.cameraMode];
             if (source) {
                 source.navigateTo(position, speedMul);

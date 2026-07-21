@@ -27,6 +27,14 @@ type Config = {
     heatmap: boolean;                           // render heatmap debug overlay (WebGPU only)
     debug: boolean;                             // auto-open the developer debug panel; can also be toggled with Ctrl+Shift+D
     lang?: string;                              // override the UI language (default: detect from browser)
+
+    // interlink additions
+    nogaming?: boolean;                         // permanently disable gaming controls (and with them, pointer lock)
+    nocontrols?: boolean;                       // detach all local input; camera is driven only by the interlink bridge
+    contentRotation?: [number, number, number]; // gsplat entity euler override (default [0, 0, 180]); interlink streamed datasets are baked upright and pass [0, 0, 0]
+    interlink?: {                               // presence enables the interlink camera-sync bridge
+        splatId: string;
+    };
 };
 
 // observable state that can change at runtime

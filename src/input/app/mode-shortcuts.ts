@@ -58,7 +58,9 @@ class ModeShortcuts {
                 }
                 break;
             case 'g':
-                state.gamingControls = !state.gamingControls;
+                if (!global.config.nogaming) {
+                    state.gamingControls = !state.gamingControls;
+                }
                 break;
             case 'h':
                 events.fire('inputEvent', 'toggleHelp');
@@ -71,7 +73,7 @@ class ModeShortcuts {
                     if (!isCaptureMode(state.cameraMode)) {
                         state.cameraMode = 'fly';
                     }
-                    if (!state.gamingControls) {
+                    if (!state.gamingControls && !global.config.nogaming) {
                         state.gamingControls = true;
                     }
                 }

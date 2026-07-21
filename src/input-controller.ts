@@ -58,6 +58,12 @@ class InputController {
         const { app, events } = global;
         const canvas = app.graphicsDevice.canvas as HTMLCanvasElement;
 
+        // nocontrols: a follower iframe — no local input attaches at all;
+        // the camera is driven exclusively by the interlink bridge.
+        if (global.config.nocontrols) {
+            return;
+        }
+
         // Trackpad MUST attach before KeyboardMouseDevice so its wheel
         // handler runs first; otherwise stopImmediatePropagation can't
         // block KeyboardMouseSource from also accumulating the wheel delta.
@@ -84,6 +90,10 @@ class InputController {
     }
 
     update(dt: number, distance: number) {
+        if (this._global.config.nocontrols) {
+            return;
+        }
+
         const { state } = this._global;
         const cameraComponent = this._global.camera.camera!;
 

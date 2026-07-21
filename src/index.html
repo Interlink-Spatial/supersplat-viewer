@@ -45,11 +45,27 @@
                 fullload: url.searchParams.has('fullload'),
                 debug: url.searchParams.has('debug'),
                 lang: url.searchParams.get('lang'),
+                nogaming: url.searchParams.has('nogaming'),
+                nocontrols: url.searchParams.get('controls') === '0',
             };
+
+            // Interlink host-page hook: an inline script injected before this
+            // one can define __INTERLINK_VIEWER_CONFIG__ = { config, settings }
+            // to override URL-derived config and provide settings inline
+            // (skipping the settings.json fetch).
+            const override = window.__INTERLINK_VIEWER_CONFIG__;
+            if (override?.config) {
+                Object.assign(sseConfig, override.config);
+                if (override.config.contentUrl) {
+                    sseConfig.contents = fetch(override.config.contentUrl);
+                }
+            }
 
             window.sse = {
                 config: sseConfig,
-                settings: fetch(settingsUrl).then(response => response.json())
+                settings: override?.settings ?
+                    Promise.resolve(override.settings) :
+                    fetch(settingsUrl).then(response => response.json())
             };
         </script>
     </head>

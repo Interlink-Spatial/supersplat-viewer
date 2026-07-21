@@ -100,6 +100,10 @@ class PointerLockManager {
     };
 
     private _activate(): void {
+        // never hijack the mouse when gaming controls are configured off
+        if (this._global?.config.nogaming) {
+            return;
+        }
         if (this._keyboardMouse) {
             (this._keyboardMouse.source as any)._pointerLock = true;
         }

@@ -369,13 +369,15 @@ const initUI = (global: Global) => {
 
     // Gaming mode toggle (settings row visible on mobile only)
     dom.gamingControlsRow.addEventListener('click', () => {
-        state.gamingControls = !state.gamingControls;
+        if (!global.config.nogaming) {
+            state.gamingControls = !state.gamingControls;
+        }
     });
 
     const updateGamingSettingsVisibility = () => {
-        const isDesktop = state.inputMode === 'desktop';
-        dom.gamingControlsDivider.classList.toggle('hidden', isDesktop);
-        dom.gamingControlsRow.classList.toggle('hidden', isDesktop);
+        const hidden = state.inputMode === 'desktop' || !!global.config.nogaming;
+        dom.gamingControlsDivider.classList.toggle('hidden', hidden);
+        dom.gamingControlsRow.classList.toggle('hidden', hidden);
     };
     events.on('inputMode:changed', updateGamingSettingsVisibility);
     updateGamingSettingsVisibility();
