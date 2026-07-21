@@ -134,9 +134,7 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
         switch (data.type) {
             case 'interlink:set-camera':
                 suppressEmit = true;
-                manager.cancelRemote();
-                manager.camera.look(poseVec, targetVec);
-                manager.snap();
+                manager.setPose(poseVec, targetVec);
                 suppressEmit = false;
                 break;
             case 'interlink:fly-to':

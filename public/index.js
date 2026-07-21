@@ -82565,9 +82565,7 @@ const registerInterlinkBridge = (global, viewer) => {
         switch (data.type) {
             case 'interlink:set-camera':
                 suppressEmit = true;
-                manager.cancelRemote();
-                manager.camera.look(poseVec, targetVec);
-                manager.snap();
+                manager.setPose(poseVec, targetVec);
                 suppressEmit = false;
                 break;
             case 'interlink:fly-to':
@@ -86510,10 +86508,12 @@ class CameraManager {
     // mutating `camera` and/or `state.cameraMode` to make the change
     // visible instantly.
     snap;
-    // Remote camera drive (interlink bridge): animated flight to a pose,
-    // damped follow toward a continuously-refreshed pose, and cancellation.
-    // While a remote drive is active it bypasses controller output; any
-    // local input interrupt cancels it so the user always wins.
+    // Remote camera drive (interlink bridge): instant pose set, animated
+    // flight to a pose, damped follow toward a continuously-refreshed pose,
+    // and cancellation. While a remote drive is active it bypasses
+    // controller output; any local input interrupt cancels it so the user
+    // always wins.
+    setPose;
     flyTo;
     easeTo;
     cancelRemote;
@@ -86555,7 +86555,9 @@ class CameraManager {
             orbit: new OrbitController(),
             fly: new FlyController(),
             walk: new WalkController(),
-            anim: animTrack ? new AnimController(animTrack) : null
+            // noanim disables the auto-animation entirely (interlink tours are
+            // guide-led; an auto figure-8 fights the sync bridge)
+            anim: animTrack && !global.config.noanim ? new AnimController(animTrack) : null
         };
         controllers.orbit.fov = resetCamera.fov;
         controllers.fly.fov = resetCamera.fov;
@@ -86606,7 +86608,24 @@ class CameraManager {
         let remoteTween = null;
         let remoteGoal = null;
         const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
+        // Remote drives operate on an interactive mode: leave anim first
+        // (the mode-change handler clears remote state, so callers switch
+        // before storing theirs).
+        const exitAnimForRemote = () => {
+            if (state.cameraMode === 'anim') {
+                state.cameraMode = defaultMode;
+            }
+        };
+        this.setPose = (position, targetPos) => {
+            exitAnimForRemote();
+            remoteTween = null;
+            remoteGoal = null;
+            this.remoteEasing = false;
+            this.camera.look(position, targetPos);
+            this.snap();
+        };
         this.flyTo = (position, targetPos, durationMs = 1200) => {
+            exitAnimForRemote();
             remoteGoal = null;
             this.remoteEasing = false;
             const to = new Camera(this.camera);
@@ -86619,6 +86638,7 @@ class CameraManager {
             };
         };
         this.easeTo = (position, targetPos) => {
+            exitAnimForRemote();
             remoteTween = null;
             const goal = remoteGoal ?? new Camera(this.camera);
             goal.look(position, targetPos);

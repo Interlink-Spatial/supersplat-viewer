@@ -59,10 +59,13 @@ class CameraManager {
     // visible instantly.
     snap: () => void;
 
-    // Remote camera drive (interlink bridge): animated flight to a pose,
-    // damped follow toward a continuously-refreshed pose, and cancellation.
-    // While a remote drive is active it bypasses controller output; any
-    // local input interrupt cancels it so the user always wins.
+    // Remote camera drive (interlink bridge): instant pose set, animated
+    // flight to a pose, damped follow toward a continuously-refreshed pose,
+    // and cancellation. While a remote drive is active it bypasses
+    // controller output; any local input interrupt cancels it so the user
+    // always wins.
+    setPose: (position: Vec3, target: Vec3) => void;
+
     flyTo: (position: Vec3, target: Vec3, durationMs?: number) => void;
 
     easeTo: (position: Vec3, target: Vec3) => void;
@@ -115,7 +118,9 @@ class CameraManager {
             orbit: new OrbitController(),
             fly: new FlyController(),
             walk: new WalkController(),
-            anim: animTrack ? new AnimController(animTrack) : null
+            // noanim disables the auto-animation entirely (interlink tours are
+            // guide-led; an auto figure-8 fights the sync bridge)
+            anim: animTrack && !global.config.noanim ? new AnimController(animTrack) : null
         };
 
         controllers.orbit.fov = resetCamera.fov;
@@ -180,7 +185,26 @@ class CameraManager {
 
         const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
 
+        // Remote drives operate on an interactive mode: leave anim first
+        // (the mode-change handler clears remote state, so callers switch
+        // before storing theirs).
+        const exitAnimForRemote = () => {
+            if (state.cameraMode === 'anim') {
+                state.cameraMode = defaultMode;
+            }
+        };
+
+        this.setPose = (position: Vec3, targetPos: Vec3) => {
+            exitAnimForRemote();
+            remoteTween = null;
+            remoteGoal = null;
+            this.remoteEasing = false;
+            this.camera.look(position, targetPos);
+            this.snap();
+        };
+
         this.flyTo = (position: Vec3, targetPos: Vec3, durationMs = 1200) => {
+            exitAnimForRemote();
             remoteGoal = null;
             this.remoteEasing = false;
             const to = new Camera(this.camera);
@@ -194,6 +218,7 @@ class CameraManager {
         };
 
         this.easeTo = (position: Vec3, targetPos: Vec3) => {
+            exitAnimForRemote();
             remoteTween = null;
             const goal = remoteGoal ?? new Camera(this.camera);
             goal.look(position, targetPos);
