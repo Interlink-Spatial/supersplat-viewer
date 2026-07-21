@@ -31,7 +31,6 @@
                 skyboxUrl,
                 collisionUrl,
                 contentUrl,
-                contents: fetch(contentUrl),
                 noui: url.searchParams.has('noui'),
                 noanim: url.searchParams.has('noanim'),
                 nofx: url.searchParams.has('nofx'),
@@ -56,10 +55,10 @@
             const override = window.__INTERLINK_VIEWER_CONFIG__;
             if (override?.config) {
                 Object.assign(sseConfig, override.config);
-                if (override.config.contentUrl) {
-                    sseConfig.contents = fetch(override.config.contentUrl);
-                }
             }
+
+            // start the content fetch only after any override has settled
+            sseConfig.contents = fetch(sseConfig.contentUrl);
 
             window.sse = {
                 config: sseConfig,
