@@ -368,6 +368,15 @@ class Viewer {
             const gsplatComponent = results[0].gsplat as GSplatComponent;
             const collision = results[2];
 
+            // LOD falloff overrides: the engine's 5m base drops venue-scale
+            // scenes to coarse LODs almost everywhere the camera stands.
+            if (config.lodBaseDistance != null) {
+                gsplatComponent.lodBaseDistance = config.lodBaseDistance;
+            }
+            if (config.lodMultiplier != null) {
+                gsplatComponent.lodMultiplier = config.lodMultiplier;
+            }
+
             // get scene bounding box
             const gsplatBbox = gsplatComponent.customAabb;
             if (gsplatBbox) {

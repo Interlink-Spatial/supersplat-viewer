@@ -29,6 +29,8 @@ type Config = {
     lang?: string;                              // override the UI language (default: detect from browser)
 
     // interlink additions
+    lodBaseDistance?: number;                   // distance (m) at which streamed-SOG chunks start dropping below LOD 0 (engine default 5 — far too aggressive for venue-scale scenes)
+    lodMultiplier?: number;                     // geometric ratio between successive LOD distance thresholds (engine default 3)
     nogaming?: boolean;                         // permanently disable gaming controls (and with them, pointer lock)
     nocontrols?: boolean;                       // detach all local input; camera is driven only by the interlink bridge
     contentRotation?: [number, number, number]; // gsplat entity euler override (default [0, 0, 180]); interlink streamed datasets are baked upright and pass [0, 0, 0]
