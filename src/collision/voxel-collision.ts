@@ -170,7 +170,7 @@ class VoxelCollision implements Collision {
     ) {
         this.worldBounds = {
             min: [metadata.gridBounds.min[0], metadata.gridBounds.min[1], metadata.gridBounds.min[2]],
-            max: [metadata.gridBounds.max[0], metadata.gridBounds.max[1], metadata.gridBounds.max[2]],
+            max: [metadata.gridBounds.max[0], metadata.gridBounds.max[1], metadata.gridBounds.max[2]]
         };
         this._gridMinX = metadata.gridBounds.min[0];
         this._gridMinY = metadata.gridBounds.min[1];
