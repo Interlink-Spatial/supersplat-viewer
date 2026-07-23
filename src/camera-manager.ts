@@ -128,6 +128,15 @@ class CameraManager {
         controllers.fly.collision = collision;
         controllers.walk.collision = collision;
 
+        // walk-feel overrides (interlink): hover height smooths uneven
+        // terrain and stair risers; capsule radius tunes gap clearance
+        if (global.config.walkHoverHeight != null) {
+            controllers.walk.hoverHeight = global.config.walkHoverHeight;
+        }
+        if (global.config.walkCapsuleRadius != null) {
+            controllers.walk.capsuleRadius = global.config.walkCapsuleRadius;
+        }
+
         const walkSource = new WalkSource();
         const flySource = new FlySource();
         const sourcesByMode: Partial<Record<CameraMode, TargetSource>> = {
