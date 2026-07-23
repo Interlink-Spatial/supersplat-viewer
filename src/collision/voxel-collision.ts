@@ -160,11 +160,18 @@ class VoxelCollision implements Collision {
         { x: 0, y: 0, z: 0 }
     ];
 
+    /** World-space bounds of the voxel grid (spawn fallback origin) */
+    readonly worldBounds: { min: [number, number, number]; max: [number, number, number] };
+
     constructor(
         metadata: VoxelMetadata,
         nodes: Uint32Array,
         leafData: Uint32Array
     ) {
+        this.worldBounds = {
+            min: [metadata.gridBounds.min[0], metadata.gridBounds.min[1], metadata.gridBounds.min[2]],
+            max: [metadata.gridBounds.max[0], metadata.gridBounds.max[1], metadata.gridBounds.max[2]],
+        };
         this._gridMinX = metadata.gridBounds.min[0];
         this._gridMinY = metadata.gridBounds.min[1];
         this._gridMinZ = metadata.gridBounds.min[2];

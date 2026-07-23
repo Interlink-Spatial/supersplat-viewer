@@ -60,6 +60,13 @@ interface Collision {
      * resolution.
      */
     readonly voxelResolution: number;
+
+    /**
+     * World-space bounds of the solid collision content, when known. Used as
+     * a spawn fallback when the camera is too far from any walkable surface
+     * for the near-camera search to succeed.
+     */
+    readonly worldBounds?: { min: [number, number, number]; max: [number, number, number] } | null;
 }
 
 /**

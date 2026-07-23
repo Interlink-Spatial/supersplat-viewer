@@ -81733,7 +81733,13 @@ class VoxelCollision {
         { x: 0, y: 0, z: 0 },
         { x: 0, y: 0, z: 0 }
     ];
+    /** World-space bounds of the voxel grid (spawn fallback origin) */
+    worldBounds;
     constructor(metadata, nodes, leafData) {
+        this.worldBounds = {
+            min: [metadata.gridBounds.min[0], metadata.gridBounds.min[1], metadata.gridBounds.min[2]],
+            max: [metadata.gridBounds.max[0], metadata.gridBounds.max[1], metadata.gridBounds.max[2]],
+        };
         this._gridMinX = metadata.gridBounds.min[0];
         this._gridMinY = metadata.gridBounds.min[1];
         this._gridMinZ = metadata.gridBounds.min[2];
@@ -86163,7 +86169,21 @@ class WalkController {
             // check accounts for the placed capsule's full vertical envelope:
             // foot sits at `floor + hoverHeight`, head at `floor + hoverHeight
             // + capsuleHeight`.
-            if (findCylinderSpawn(this.collision, camera.position.x, camera.position.y, camera.position.z, (this.capsuleHeight + this.hoverHeight) * 0.5, this.capsuleRadius, spawnProbe)) {
+            let spawned = findCylinderSpawn(this.collision, camera.position.x, camera.position.y, camera.position.z, (this.capsuleHeight + this.hoverHeight) * 0.5, this.capsuleRadius, spawnProbe);
+            // The near-camera search only scans ~5m around the entry pose; a
+            // camera framing the scene from afar (or hovering high above it)
+            // finds nothing and would free-fall into the void. Fall back to
+            // probing straight down at the collision bounds' centre.
+            if (!spawned && this.collision.worldBounds) {
+                const { min, max } = this.collision.worldBounds;
+                const cx = (min[0] + max[0]) / 2;
+                const cz = (min[2] + max[2]) / 2;
+                const hit = this.collision.queryRay(cx, max[1] + 1, cz, 0, -1, 0, (max[1] - min[1]) + 2);
+                if (hit) {
+                    spawned = findCylinderSpawn(this.collision, hit.x, hit.y + this.hoverHeight + this.eyeHeight, hit.z, (this.capsuleHeight + this.hoverHeight) * 0.5, this.capsuleRadius, spawnProbe);
+                }
+            }
+            if (spawned) {
                 // spawnProbe is the floor world position the cylinder rests
                 // on. Eye sits hoverHeight + eyeHeight above the floor.
                 this._position.set(spawnProbe.x, spawnProbe.y + this.hoverHeight + this.eyeHeight, spawnProbe.z);
