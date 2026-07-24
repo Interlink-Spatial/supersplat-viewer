@@ -69,11 +69,17 @@ const loadGsplat = async (app: AppBase, config: Config, progressCallback: (progr
 
 const loadSkybox = (app: AppBase, url: string) => {
     return new Promise<Asset>((resolve, reject) => {
+        // HDR/EXR skyboxes ship as RGBP-packed equirects (shared-exponent
+        // encoding in the alpha channel); ordinary image formats are plain
+        // LDR sRGB equirects (e.g. tonemapped venue-backdrop JPGs) and must
+        // not be decoded as RGBP or they blow out to white.
+        const ext = new URL(url, location.href).pathname.split('.').pop()?.toLowerCase();
+        const rgbp = ext === 'hdr' || ext === 'exr';
         const asset = new Asset('skybox', 'texture', {
             url
         }, {
-            type: 'rgbp',
-            mipmaps: false,
+            ...(rgbp ? { type: 'rgbp' } : {}),
+            mipmaps: !rgbp,
             addressu: 'repeat',
             addressv: 'clamp'
         });
