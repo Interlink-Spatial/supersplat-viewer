@@ -31,6 +31,18 @@ interface Window {
         fov: number;
         mode: 'orbit' | 'anim' | 'fly' | 'walk';
     }) => void;
+
+    __interlinkQA?: {
+        ready: () => boolean;
+        pose: () => import('./src/qa-harness').Pose;
+        step: (ticks: number, input?: import('./src/qa-harness').StepInput) => import('./src/qa-harness').Sample[];
+        navigate: (x: number, y: number, z: number, maxTicks?: number) => {
+            trace: import('./src/qa-harness').Sample[];
+            completed: boolean;
+        };
+        resetToSpawn: () => void;
+        release: () => void;
+    };
 }
 
 declare module 'playcanvas/scripts/esm/xr/xr-controllers.mjs' {
