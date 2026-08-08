@@ -164,6 +164,12 @@ class Viewer {
 
     debugPanel: DebugPanel | null = null;
 
+    /** When true the rAF update loop yields; QA drives stepFixed() instead. */
+    qaPaused = false;
+
+    /** Advance the camera one fixed tick. Assigned where applyCamera is in scope. */
+    stepFixed: (dt: number) => void = () => {};
+
     origChunks: {
         glsl: {
             gsplatOutputVS: string,
@@ -285,10 +291,24 @@ class Viewer {
             cameraEntity.camera.nearClip = Math.min(1.0, near);
         };
 
-        // handle application update
+        // QA drives the camera through stepFixed(); yielding here keeps the
+        // wall clock from interleaving extra updates into a deterministic run.
+        this.stepFixed = (dt: number) => {
+            if (!this.inputController || !this.cameraManager) {
+                return;
+            }
+            this.cameraManager.update(dt, this.inputController.frame);
+            applyCamera(this.cameraManager.camera);
+            app.renderNextFrame = true;
+        };
+
         app.on('update', (deltaTime) => {
             // in xr mode we leave the camera alone
             if (app.xr.active) {
+                return;
+            }
+
+            if (this.qaPaused) {
                 return;
             }
 
