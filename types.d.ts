@@ -40,6 +40,10 @@ interface Window {
             trace: import('./src/qa-harness').Sample[];
             completed: boolean;
         };
+        stepUntilIdle: (maxTicks?: number) => {
+            trace: import('./src/qa-harness').Sample[];
+            completed: boolean;
+        };
         resetToSpawn: () => void;
         release: () => void;
     };
