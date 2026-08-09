@@ -21,6 +21,7 @@ import type { Collision } from './collision';
 import { observe } from './core/observe';
 import { registerInterlinkBridge } from './interlink-bridge';
 import { initLocalization } from './localization';
+import { registerQaHarness } from './qa-harness';
 import { importSettings } from './settings';
 import type { Config, Global } from './types';
 import { initPoster, initUI } from './ui';
@@ -334,6 +335,8 @@ const main = async (canvas: HTMLCanvasElement, settingsJson: any, config: Config
     if (config.interlink?.splatId) {
         registerInterlinkBridge(global, viewer);
     }
+
+    registerQaHarness(global, viewer);
 
     return viewer;
 };

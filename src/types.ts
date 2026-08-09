@@ -36,6 +36,7 @@ type Config = {
     nogaming?: boolean;                         // permanently disable gaming controls (and with them, pointer lock)
     nocontrols?: boolean;                       // detach all local input; camera is driven only by the interlink bridge
     contentRotation?: [number, number, number]; // gsplat entity euler override (default [0, 0, 180]); interlink streamed datasets are baked upright and pass [0, 0, 0]
+    qa?: boolean;                               // enables window.__interlinkQA deterministic stepping; never set on visitor pages
     interlink?: {                               // presence enables the interlink camera-sync bridge
         splatId: string;
     };
