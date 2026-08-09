@@ -83313,10 +83313,16 @@ const FIXED_DT$1 = 1 / 60;
 const navNormal = new Vec3(0, 1, 0);
 const navTarget = new Vec3();
 const registerQaHarness = (global, viewer) => {
-    const { config, events } = global;
+    const { config, events, state } = global;
     if (!config.qa) {
         return;
     }
+    // Lets the harness assert it's actually in walk mode before probing,
+    // instead of pressing '3' blindly. '3' fires toggleWalk, which toggles
+    // walk on OR off depending on the current mode — if the scene's initial
+    // camera already sits in walk (e.g. inside the bbox), a blind '3'
+    // exits to fly instead of entering walk.
+    const mode = () => state.cameraMode;
     const pose = () => {
         const { camera } = viewer.cameraManager;
         return {
@@ -83464,7 +83470,7 @@ const registerQaHarness = (global, viewer) => {
     const release = () => {
         viewer.qaPaused = false;
     };
-    window.__interlinkQA = { ready, pose, step, navigate, stepUntilIdle, resetToSpawn, release };
+    window.__interlinkQA = { ready, mode, pose, step, navigate, stepUntilIdle, resetToSpawn, release };
 };
 
 const migrateV1 = (settings) => {

@@ -1,6 +1,6 @@
 import { Vec3 } from 'playcanvas';
 
-import type { Global } from './types';
+import type { CameraMode, Global } from './types';
 import type { Viewer } from './viewer';
 
 // Deterministic walk-QA hook.
@@ -32,10 +32,17 @@ const navNormal = new Vec3(0, 1, 0);
 const navTarget = new Vec3();
 
 const registerQaHarness = (global: Global, viewer: Viewer) => {
-    const { config, events } = global;
+    const { config, events, state } = global;
     if (!config.qa) {
         return;
     }
+
+    // Lets the harness assert it's actually in walk mode before probing,
+    // instead of pressing '3' blindly. '3' fires toggleWalk, which toggles
+    // walk on OR off depending on the current mode — if the scene's initial
+    // camera already sits in walk (e.g. inside the bbox), a blind '3'
+    // exits to fly instead of entering walk.
+    const mode = (): CameraMode => state.cameraMode;
 
     const pose = (): Pose => {
         const { camera } = viewer.cameraManager!;
@@ -198,7 +205,7 @@ const registerQaHarness = (global: Global, viewer: Viewer) => {
         viewer.qaPaused = false;
     };
 
-    window.__interlinkQA = { ready, pose, step, navigate, stepUntilIdle, resetToSpawn, release };
+    window.__interlinkQA = { ready, mode, pose, step, navigate, stepUntilIdle, resetToSpawn, release };
 };
 
 export { registerQaHarness };

@@ -34,6 +34,7 @@ interface Window {
 
     __interlinkQA?: {
         ready: () => boolean;
+        mode: () => 'orbit' | 'anim' | 'fly' | 'walk';
         pose: () => import('./src/qa-harness').Pose;
         step: (ticks: number, input?: import('./src/qa-harness').StepInput) => import('./src/qa-harness').Sample[];
         navigate: (x: number, y: number, z: number, maxTicks?: number) => {
