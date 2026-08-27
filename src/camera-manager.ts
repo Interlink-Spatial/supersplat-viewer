@@ -136,6 +136,9 @@ class CameraManager {
         if (global.config.walkCapsuleRadius != null) {
             controllers.walk.capsuleRadius = global.config.walkCapsuleRadius;
         }
+        if (global.config.walkStepHeight != null) {
+            controllers.walk.stepHeight = global.config.walkStepHeight;
+        }
 
         const walkSource = new WalkSource();
         const flySource = new FlySource();

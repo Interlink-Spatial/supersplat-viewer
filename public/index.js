@@ -86241,6 +86241,9 @@ const right$1 = new Vec3();
 const moveStep = [0, 0, 0];
 const offset = new Vec3();
 const spawnProbe = new Vec3();
+const stepProbe = { x: 0, y: 0, z: 0 };
+/** Lift heights tried when testing whether a blocker is a climbable step. */
+const STEP_ATTEMPTS = 4;
 /**
  * First-person camera controller with spring-damper suspension over collision terrain.
  *
@@ -86303,6 +86306,21 @@ class WalkController {
      * The capsule hovers this far above terrain to avoid bouncing on noisy surfaces.
      */
     hoverHeight = 0.2;
+    /**
+     * Tallest riser (metres) the walker steps up instead of being stopped by.
+     *
+     * Without this, `queryCapsule` pushes the capsule straight back off any
+     * step, so a staircase reads as a wall: walk-QA measured a terrace
+     * flight as `stairs_unclimbable`, deltaY 0 over a 3.85m approach.
+     *
+     * Measured against synthetic risers: the suspension spring alone already
+     * carries a 0.3m step (the averaged ground probe sees the tread and
+     * lifts), so this only matters above that. At 1.0m the walker without it
+     * grinds against the face — 162 collision resolutions, no progress —
+     * and with it climbs in a single step. 0.6m matches a Minecraft player's
+     * step height and, at 0.2m voxels, is three voxels. Set to 0 to disable.
+     */
+    stepHeight = 0.6;
     /**
      * Spring stiffness for ground-following suspension (higher = stiffer tracking).
      */
@@ -86549,6 +86567,29 @@ class WalkController {
         const center = pos.y - this.eyeHeight + this.capsuleHeight * 0.5;
         const half = this.capsuleHeight * 0.5 - this.capsuleRadius;
         if (this.collision.queryCapsule(pos.x, center, pos.z, half, this.capsuleRadius, out)) {
+            // A short riser should be climbed, not treated as a wall. Only
+            // when the push-out is sideways (a wall or step face, rather than
+            // a floor lifting us or a ceiling pressing down) and we are
+            // already walking: stepping while airborne would let the walker
+            // ratchet up sheer surfaces.
+            const sideways = out.x !== 0 || out.z !== 0;
+            if (this.stepHeight > 0 && this._grounded && sideways && out.y <= 0) {
+                const rise = this.stepHeight / STEP_ATTEMPTS;
+                for (let attempt = 1; attempt <= STEP_ATTEMPTS; attempt++) {
+                    const lift = rise * attempt;
+                    // Testing the whole capsule at the raised height also
+                    // covers headroom: a step under a low soffit stays
+                    // blocked because the lifted capsule still overlaps.
+                    if (!this.collision.queryCapsule(pos.x, center + lift, pos.z, half, this.capsuleRadius, stepProbe)) {
+                        pos.y += lift;
+                        // The ground probe finds the tread next frame and the
+                        // suspension spring settles onto it, so no vertical
+                        // velocity is injected here.
+                        disp.set(0, lift, 0);
+                        return;
+                    }
+                }
+            }
             disp.set(out.x, out.y, out.z);
             pos.add(disp);
             // ceiling collision: cancel upward velocity
@@ -86763,6 +86804,9 @@ class CameraManager {
         }
         if (global.config.walkCapsuleRadius != null) {
             controllers.walk.capsuleRadius = global.config.walkCapsuleRadius;
+        }
+        if (global.config.walkStepHeight != null) {
+            controllers.walk.stepHeight = global.config.walkStepHeight;
         }
         const walkSource = new WalkSource();
         const flySource = new FlySource();
