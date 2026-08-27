@@ -139,6 +139,10 @@ class CameraManager {
         if (global.config.walkStepHeight != null) {
             controllers.walk.stepHeight = global.config.walkStepHeight;
         }
+        if (global.config.walkSpawn) {
+            const [sx, sy, sz] = global.config.walkSpawn;
+            controllers.walk.spawnPosition = new Vec3(sx, sy, sz);
+        }
 
         const walkSource = new WalkSource();
         const flySource = new FlySource();

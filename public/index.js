@@ -86322,6 +86322,18 @@ class WalkController {
      */
     stepHeight = 0.6;
     /**
+     * Where walk mode should start, in world space, or null to start from
+     * wherever the camera is.
+     *
+     * The camera pose is a viewing pose — chosen to frame the venue, often
+     * high and outside it. In open scenes the search below recovers, but in a
+     * wooded one it lands on the canopy: walk-QA measured a spawn dropping
+     * 15.7m through treetops. The collision build already computes a point
+     * it has verified is on the walkable floor (the voxel seed), so the app
+     * passes it through as `walkSpawn` and the search starts from there.
+     */
+    spawnPosition = null;
+    /**
      * Spring stiffness for ground-following suspension (higher = stiffer tracking).
      */
     springStiffness = 800;
@@ -86360,7 +86372,8 @@ class WalkController {
             // check accounts for the placed capsule's full vertical envelope:
             // foot sits at `floor + hoverHeight`, head at `floor + hoverHeight
             // + capsuleHeight`.
-            let spawned = findCylinderSpawn(this.collision, camera.position.x, camera.position.y, camera.position.z, (this.capsuleHeight + this.hoverHeight) * 0.5, this.capsuleRadius, spawnProbe);
+            const origin = this.spawnPosition ?? camera.position;
+            let spawned = findCylinderSpawn(this.collision, origin.x, origin.y, origin.z, (this.capsuleHeight + this.hoverHeight) * 0.5, this.capsuleRadius, spawnProbe);
             // The near-camera search only scans ~5m around the entry pose; a
             // camera framing the scene from afar (or hovering high above it)
             // finds nothing and would free-fall into the void. Fall back to
@@ -86807,6 +86820,10 @@ class CameraManager {
         }
         if (global.config.walkStepHeight != null) {
             controllers.walk.stepHeight = global.config.walkStepHeight;
+        }
+        if (global.config.walkSpawn) {
+            const [sx, sy, sz] = global.config.walkSpawn;
+            controllers.walk.spawnPosition = new Vec3(sx, sy, sz);
         }
         const walkSource = new WalkSource();
         const flySource = new FlySource();
