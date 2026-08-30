@@ -169,8 +169,14 @@ class TrackpadDevice implements InputDevice {
             const zoomZ = this._zoom * this.wheelSpeed * this.trackpadZoomSensitivity * DISPLACEMENT_SCALE;
             deltas.move.append([0, 0, zoomZ]);
         } else if (isFirstPerson) {
-            // Ctrl + scroll → look around in fly/walk
-            const v = tmpV.set(this._orbit[0], this._orbit[1], 0);
+            // Ctrl + scroll → look around in fly/walk.
+            //
+            // Inverted for the same reason as touch and mouse: first-person
+            // look drags the world, not the head. Without this, looking around
+            // by trackpad would go the opposite way to looking around by drag
+            // in the very same mode.
+            const dragInvert = ctx.gamingControls ? 1 : -1;
+            const v = tmpV.set(this._orbit[0] * dragInvert, this._orbit[1] * dragInvert, 0);
             v.mulScalar(this.orbitSpeed * orbitFactor * this.trackpadOrbitSensitivity * DISPLACEMENT_SCALE);
             deltas.rotate.append([v.x, v.y, 0]);
 

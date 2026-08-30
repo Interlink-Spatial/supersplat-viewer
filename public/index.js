@@ -88430,8 +88430,20 @@ class KeyboardMouseDevice {
         v.add(wheelMove.mulScalar(this.wheelSpeed * DISPLACEMENT_SCALE));
         deltas.move.append([v.x, v.y, flipZForOrbit(mode, v.z)]);
         // rotate (mouse-drag, masked when in pan mode)
+        //
+        // First-person look drags the world rather than the head: pulling the
+        // pointer left brings what is on the left towards you. Orbit keeps the
+        // opposite sense, because there you are spinning an object in front of
+        // you rather than turning your own head.
+        //
+        // This is the rule touch.ts has always applied (its `dragInvert`);
+        // only the mouse path was missing it, so the two devices disagreed
+        // about the same gesture in the same mode. `gamingControls` still opts
+        // out, since pointer-lock FPS convention is what a visitor expects
+        // there.
+        const dragInvert = (isFirstPerson && !gamingControls) ? -1 : 1;
         v.set(0, 0, 0);
-        mouseRotate.set(mouse[0], mouse[1], 0);
+        mouseRotate.set(mouse[0] * dragInvert, mouse[1] * dragInvert, 0);
         v.add(mouseRotate.mulScalar((1 - pan) * this.orbitSpeed * orbitFactor * this.mouseRotateSensitivity * DISPLACEMENT_SCALE));
         deltas.rotate.append([v.x, v.y, v.z]);
     }
@@ -88723,8 +88735,14 @@ class TrackpadDevice {
             deltas.move.append([0, 0, zoomZ]);
         }
         else if (isFirstPerson) {
-            // Ctrl + scroll → look around in fly/walk
-            const v = tmpV$1.set(this._orbit[0], this._orbit[1], 0);
+            // Ctrl + scroll → look around in fly/walk.
+            //
+            // Inverted for the same reason as touch and mouse: first-person
+            // look drags the world, not the head. Without this, looking around
+            // by trackpad would go the opposite way to looking around by drag
+            // in the very same mode.
+            const dragInvert = ctx.gamingControls ? 1 : -1;
+            const v = tmpV$1.set(this._orbit[0] * dragInvert, this._orbit[1] * dragInvert, 0);
             v.mulScalar(this.orbitSpeed * orbitFactor * this.trackpadOrbitSensitivity * DISPLACEMENT_SCALE);
             deltas.rotate.append([v.x, v.y, 0]);
             // shift + scroll → strafe (X) + vertical (Y) via the same
