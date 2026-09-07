@@ -35,6 +35,7 @@ type Config = {
     walkCapsuleRadius?: number;                 // walk-mode capsule radius (m); smaller squeezes through narrower gaps (default 0.2)
     walkStepHeight?: number;                    // tallest riser (m) walk mode steps up instead of being blocked by; 0 disables stepping (default 0.5)
     walkSpawn?: [number, number, number];       // world position walk mode starts from (the collision build's verified floor seed); default is the camera pose, which in wooded scenes lands on the canopy
+    initialCameraMode?: 'orbit' | 'fly' | 'walk'; // mode to open in (the embed's data-view); unset opens orbit outside the scene and walk inside it; walk falls back to that choice when the scene is not walkable
     nogaming?: boolean;                         // permanently disable gaming controls (and with them, pointer lock)
     nocontrols?: boolean;                       // detach all local input; camera is driven only by the interlink bridge
     contentRotation?: [number, number, number]; // gsplat entity euler override (default [0, 0, 180]); interlink streamed datasets are baked upright and pass [0, 0, 0]

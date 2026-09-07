@@ -162,13 +162,24 @@ class CameraManager {
         state.hasAnimation = !!controllers.anim;
         state.animationDuration = controllers.anim ? controllers.anim.animState.cursor.duration : 0;
 
+        // the automatic opening mode: orbit when the hero camera looks at the
+        // scene from outside, otherwise walk where the scene is walkable
+        const defaultMode: CameraMode = isObjectExperience ? 'orbit' : (walkAllowed ? 'walk' : 'fly');
+
+        // an explicit opening mode (interlink: the embed's data-view) wins
+        // over the automatic one, unless it asks for walk in a scene that
+        // cannot be walked — then the automatic choice stands
+        const requestedMode = global.config.initialCameraMode;
+        const initialMode: CameraMode = requestedMode && (requestedMode !== 'walk' || walkAllowed) ?
+            requestedMode :
+            (state.hasAnimation ? 'anim' : defaultMode);
+
         // initialize camera mode and initial camera position
-        state.cameraMode = state.hasAnimation ? 'anim' : (isObjectExperience ? 'orbit' : (walkAllowed ? 'walk' : 'fly'));
+        state.cameraMode = initialMode;
         this.camera.copy(resetCamera);
 
         const target = new Camera(this.camera);             // the active controller updates this
         const from = new Camera(this.camera);               // stores the previous camera state during transition
-        const defaultMode: CameraMode = isObjectExperience ? 'orbit' : (walkAllowed ? 'walk' : 'fly');
         let fromMode: CameraMode = defaultMode;
 
         // tracks the mode to restore when exiting walk
