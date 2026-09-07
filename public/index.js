@@ -84245,6 +84245,9 @@ const initUI = (global) => {
         dom.fpsCamera.classList.toggle('active', state.cameraMode === 'walk');
     };
     events.on('cameraMode:changed', updateCameraModeUI);
+    // paint the opening mode too: state starts as 'orbit', so a scene that
+    // opens in orbit never fires cameraMode:changed and no button lit up
+    updateCameraModeUI();
     // Walk mode hint banner (shown once per session on first FPS entry)
     let walkHintShown = false;
     const getWalkHintText = () => {
