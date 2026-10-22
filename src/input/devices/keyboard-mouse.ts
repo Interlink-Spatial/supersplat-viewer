@@ -175,20 +175,17 @@ class KeyboardMouseDevice implements InputDevice {
 
         // rotate (mouse-drag, masked when in pan mode)
         //
-        // First-person look drags the world rather than the head: pulling the
-        // pointer left brings what is on the left towards you. Orbit keeps the
-        // opposite sense, because there you are spinning an object in front of
-        // you rather than turning your own head.
-        //
-        // This is the rule touch.ts has always applied (its `dragInvert`);
-        // only the mouse path was missing it, so the two devices disagreed
-        // about the same gesture in the same mode. `gamingControls` still opts
-        // out, since pointer-lock FPS convention is what a visitor expects
-        // there.
-        const dragInvert = (isFirstPerson && !gamingControls) ? -1 : 1;
-
+        // A mouse or trackpad looks camera-centric: in first-person, pulling
+        // the pointer left turns your head left, so the scene slides right.
+        // Touch is the opposite — direct manipulation, the scene follows the
+        // finger — and keeps its own `dragInvert` in touch.ts. The split is
+        // per input, not per device: KeyboardMouseSource only accepts
+        // pointerType 'mouse', and touch/pen events go to MultiTouchSource,
+        // so a touchscreen laptop gets each convention from the input it is
+        // actually using. Orbit is the same on every input: the object
+        // follows the drag.
         v.set(0, 0, 0);
-        mouseRotate.set(mouse[0] * dragInvert, mouse[1] * dragInvert, 0);
+        mouseRotate.set(mouse[0], mouse[1], 0);
         v.add(mouseRotate.mulScalar((1 - pan) * this.orbitSpeed * orbitFactor * this.mouseRotateSensitivity * DISPLACEMENT_SCALE));
         deltas.rotate.append([v.x, v.y, v.z]);
     }
