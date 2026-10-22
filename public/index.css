@@ -750,4 +750,9 @@ button {
   border-radius: 6px 0 0 6px;
 }
 
+body.interlink-follow .buttonGroup:has(#orbitCamera),
+body.interlink-follow #frame {
+  display: none !important;
+}
+
 /*# sourceMappingURL=index.css.map */
