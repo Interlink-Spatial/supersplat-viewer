@@ -896,3 +896,14 @@ button {
         }
     }
 }
+
+// Interlink guided-tour follow: the guest stands where the guide stands and
+// can only look around, so the camera-mode switch and "frame" (which would
+// fly to an orbit view) are hidden. Reset stays — it recentres the view on
+// where the guide is facing.
+body.interlink-follow {
+    .buttonGroup:has(#orbitCamera),
+    #frame {
+        display: none !important;
+    }
+}

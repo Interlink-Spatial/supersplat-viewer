@@ -1,5 +1,6 @@
 import { Vec3 } from 'playcanvas';
 
+import type { CameraManager } from './camera-manager';
 import type { CameraMode, Global } from './types';
 import type { Viewer } from './viewer';
 
@@ -14,6 +15,15 @@ import type { Viewer } from './viewer';
 //   inbound:   interlink:set-camera    { pose }                 snap
 //              interlink:fly-to        { pose, duration? }      animated flight (emits during flight)
 //              interlink:ease-camera   { pose }                 damped follow; local input wins
+//              interlink:follow        { pose, lookLimit? }     guided-tour follow: stand at the
+//                                                               guide's position; local input only
+//                                                               looks around, within lookLimit
+//                                                               { yaw, pitch } degrees either side
+//                                                               of the guide's facing (default
+//                                                               ±90 / ±75). Local input never
+//                                                               cancels it; a follow sent before the
+//                                                               scene loads is applied once it does.
+//              interlink:unfollow      {}                       hand the camera back to local input
 //
 // Enabled when `config.interlink.splatId` is set. Registered from main()
 // after the Viewer is constructed; the camera manager only exists once the
@@ -121,9 +131,61 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
 
     // --- inbound: remote camera drive ---
 
+    type LookLimit = { yaw?: number; pitch?: number };
+    type FollowRequest = { pose: Pose; lookLimit?: LookLimit };
+
+    const followPos = new Vec3();
+    const followTarget = new Vec3();
+    const applyFollow = (manager: CameraManager, request: FollowRequest) => {
+        const { position, target } = request.pose;
+        followPos.set(position[0], position[1], position[2]);
+        followTarget.set(target[0], target[1], target[2]);
+        const yaw = request.lookLimit?.yaw;
+        const pitch = request.lookLimit?.pitch;
+        manager.follow(
+            followPos,
+            followTarget,
+            typeof yaw === 'number' ? yaw : undefined,
+            typeof pitch === 'number' ? pitch : undefined
+        );
+    };
+
+    // The guide may be standing still when a guest's scene finishes
+    // loading, so no fresh pose would arrive to start the follow; the
+    // latest request is kept until the camera manager exists.
+    let pendingFollow: FollowRequest | null = null;
+    app.on('update', () => {
+        if (pendingFollow && viewer.cameraManager) {
+            applyFollow(viewer.cameraManager, pendingFollow);
+            pendingFollow = null;
+        }
+    });
+
+    const setFollowing = (on: boolean) => {
+        // hides the camera-mode buttons, which mean nothing while following
+        document.body.classList.toggle('interlink-follow', on);
+    };
+
     window.addEventListener('message', (event: MessageEvent) => {
-        const data = (event.data ?? {}) as { type?: string; pose?: Pose; duration?: number };
+        const data = (event.data ?? {}) as { type?: string; pose?: Pose; duration?: number; lookLimit?: LookLimit };
         const manager = viewer.cameraManager;
+
+        if (data.type === 'interlink:follow' && data.pose) {
+            setFollowing(true);
+            if (manager) {
+                applyFollow(manager, { pose: data.pose, lookLimit: data.lookLimit });
+            } else {
+                pendingFollow = { pose: data.pose, lookLimit: data.lookLimit };
+            }
+            return;
+        }
+        if (data.type === 'interlink:unfollow') {
+            setFollowing(false);
+            pendingFollow = null;
+            manager?.unfollow();
+            return;
+        }
+
         if (!manager || !data.pose) {
             return;
         }

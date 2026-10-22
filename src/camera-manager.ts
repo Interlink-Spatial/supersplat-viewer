@@ -1,5 +1,6 @@
 import {
     type BoundingBox,
+    math,
     Vec3
 } from 'playcanvas';
 
@@ -14,12 +15,26 @@ import type { TargetSource } from './cameras/target-navigation';
 import { WalkController } from './cameras/walk-controller';
 import { WalkSource } from './cameras/walk-source';
 import type { Collision } from './collision';
-import { easeOut } from './core/math';
+import { damp, easeOut } from './core/math';
 import { Annotation } from './settings';
 import { CameraMode, Global } from './types';
 
 const tmpCamera = new Camera();
 const tmpv = new Vec3();
+
+// Guided-tour follow: how far a guest may turn away from where the guide is
+// facing. ±90° of yaw is 180° of freedom — enough to look around a room, not
+// enough to face away from what the guide is pointing at.
+const FOLLOW_DEFAULT_YAW_LIMIT = 90;
+const FOLLOW_DEFAULT_PITCH_LIMIT = 75;
+const FOLLOW_MAX_PITCH = 85;
+
+// Rate (1/s) at which a follower closes on the guide's latest pose. Guide
+// poses arrive at ~15 Hz; easing toward each one hides that cadence.
+const FOLLOW_EASE_RATE = 10;
+
+// shortest signed difference between two angles, in degrees
+const angleDelta = (from: number, to: number) => ((((to - from) % 360) + 540) % 360) - 180;
 
 // Walk mode is only enabled when the scene's horizontal footprint is large
 // enough to walk around in. Vertical extent (Y) is irrelevant — a tall but
@@ -71,6 +86,17 @@ class CameraManager {
     easeTo: (position: Vec3, target: Vec3) => void;
 
     cancelRemote: () => void;
+
+    // Guided-tour follow (interlink bridge): the camera stands wherever the
+    // guide stands, and local input only turns the head — yaw within
+    // ±yawLimit of the guide's facing, pitch within ±pitchLimit. Unlike the
+    // remote drives above, local input never cancels it; the guest page
+    // ends it with unfollow().
+    follow: (position: Vec3, target: Vec3, yawLimit?: number, pitchLimit?: number) => void;
+
+    unfollow: () => void;
+
+    following = false;
 
     // True while a damped remote follow (easeTo) is active. The bridge
     // suppresses outbound pose emission during easing so the eased copy
@@ -210,6 +236,16 @@ class CameraManager {
         let remoteTween: { from: Camera; to: Camera; elapsed: number; duration: number } | null = null;
         let remoteGoal: Camera | null = null;
 
+        // follow state: the guide's latest pose, the eased copy the camera
+        // stands on, and the guest's look offset from the guide's facing
+        // ([pitch, yaw], degrees — the order camera.angles uses)
+        let followGoal: Camera | null = null;
+        const followBase = new Camera();
+        const lookOffset = new Vec3();
+        const lookOffsetGoal = new Vec3();
+        let followYawLimit = FOLLOW_DEFAULT_YAW_LIMIT;
+        let followPitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT;
+
         const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
 
         // Remote drives operate on an interactive mode: leave anim first
@@ -242,6 +278,15 @@ class CameraManager {
                 elapsed: 0,
                 duration: Math.max(0.001, durationMs / 1000)
             };
+
+            // A guide-led flight (a preset view) is the guide redirecting
+            // attention: land facing it, and keep following from there.
+            if (followGoal) {
+                followGoal.copy(to);
+                followBase.copy(to);
+                lookOffset.set(0, 0, 0);
+                lookOffsetGoal.set(0, 0, 0);
+            }
         };
 
         this.easeTo = (position: Vec3, targetPos: Vec3) => {
@@ -262,6 +307,48 @@ class CameraManager {
             }
         };
 
+        // Look-around is first-person: entering fly makes every input
+        // device produce first-person look deltas, with each device's own
+        // drag convention (camera-centric mouse, direct-manipulation touch).
+        const isFollowMode = (mode: CameraMode) => mode === 'fly' || mode === 'walk';
+
+        this.follow = (position: Vec3, targetPos: Vec3, yawLimit = FOLLOW_DEFAULT_YAW_LIMIT, pitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT) => {
+            followYawLimit = math.clamp(yawLimit, 0, 180);
+            followPitchLimit = math.clamp(pitchLimit, 0, FOLLOW_MAX_PITCH);
+
+            const goal = followGoal ?? new Camera(this.camera);
+            goal.look(position, targetPos);
+            goal.fov = this.camera.fov;
+
+            if (!followGoal) {
+                // first contact: stand where the guide is, facing where
+                // they face, rather than gliding in from wherever we were
+                exitAnimForRemote();
+                if (!isFollowMode(state.cameraMode)) {
+                    state.cameraMode = 'fly';
+                }
+                remoteTween = null;
+                remoteGoal = null;
+                this.remoteEasing = false;
+                followBase.copy(goal);
+                lookOffset.set(0, 0, 0);
+                lookOffsetGoal.set(0, 0, 0);
+            }
+
+            followGoal = goal;
+            this.following = true;
+            global.app.renderNextFrame = true;
+        };
+
+        this.unfollow = () => {
+            if (!followGoal) {
+                return;
+            }
+            followGoal = null;
+            this.following = false;
+            this.snap();
+        };
+
         // application update
         this.update = (deltaTime: number, frame: CameraFrame) => {
 
@@ -274,6 +361,34 @@ class CameraManager {
                 if (t >= 1) {
                     remoteTween = null;
                     this.snap();
+                }
+                return;
+            }
+            if (followGoal) {
+                // position and facing come from the guide; only look input
+                // is honoured, and only inside the allowed cone
+                const { rotate } = frame.read();
+                lookOffsetGoal.x = math.clamp(lookOffsetGoal.x - rotate[1], -followPitchLimit, followPitchLimit);
+                lookOffsetGoal.y = math.clamp(lookOffsetGoal.y - rotate[0], -followYawLimit, followYawLimit);
+                lookOffset.lerp(lookOffset, lookOffsetGoal, damp(0.95, deltaTime));
+
+                const f = 1 - Math.exp(-deltaTime * FOLLOW_EASE_RATE);
+                followBase.position.lerp(followBase.position, followGoal.position, f);
+                followBase.angles.x += (followGoal.angles.x - followBase.angles.x) * f;
+                followBase.angles.y += angleDelta(followBase.angles.y, followGoal.angles.y) * f;
+                followBase.distance = math.lerp(followBase.distance, followGoal.distance, f);
+
+                const pitch = math.clamp(followBase.angles.x + lookOffset.x, -FOLLOW_MAX_PITCH, FOLLOW_MAX_PITCH);
+                const yaw = followBase.angles.y + lookOffset.y;
+                const moved = this.camera.position.distance(followBase.position) > 1e-5 ||
+                    Math.abs(this.camera.angles.x - pitch) > 1e-4 ||
+                    Math.abs(this.camera.angles.y - yaw) > 1e-4;
+
+                this.camera.position.copy(followBase.position);
+                this.camera.angles.set(pitch, yaw, 0);
+                this.camera.distance = followBase.distance;
+                if (moved) {
+                    global.app.renderNextFrame = true;
                 }
                 return;
             }
@@ -326,6 +441,14 @@ class CameraManager {
             // local input always wins over a remote (bridge-driven) camera
             if (eventName === 'interrupt') {
                 this.cancelRemote();
+            }
+            // following: the only local camera action is looking around, and
+            // reset brings the view back to where the guide is facing
+            if (followGoal) {
+                if (eventName === 'reset') {
+                    lookOffsetGoal.set(0, 0, 0);
+                }
+                return;
             }
             switch (eventName) {
                 case 'frame':
@@ -399,6 +522,17 @@ class CameraManager {
             this.remoteEasing = false;
             sourcesByMode[prev]?.cancel();
 
+            // a follower stays first-person (mode shortcuts and the mode
+            // buttons can still fire); put it back on the next tick, outside
+            // this change notification
+            if (followGoal && !isFollowMode(value)) {
+                setTimeout(() => {
+                    if (followGoal && !isFollowMode(state.cameraMode)) {
+                        state.cameraMode = 'fly';
+                    }
+                });
+            }
+
             // snapshot the current pose before any controller mutation
             startTransition();
 
@@ -425,6 +559,10 @@ class CameraManager {
 
         // handle user picking in the scene
         events.on('pick', (position: Vec3) => {
+            if (followGoal) {
+                return;
+            }
+
             // switch to orbit camera on pick
             state.cameraMode = 'orbit';
 
@@ -458,6 +596,9 @@ class CameraManager {
 
         // tap-to-navigate: start auto-driving the active mode toward a picked position
         events.on('navigateTo', (position: Vec3, normal: Vec3, speedMul = 1) => {
+            if (followGoal) {
+                return;
+            }
             this.cancelRemote();
             const source = sourcesByMode[state.cameraMode];
             if (source) {
