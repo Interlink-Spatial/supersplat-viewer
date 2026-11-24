@@ -38,6 +38,7 @@ type Config = {
     initialCameraMode?: 'orbit' | 'fly' | 'walk'; // mode to open in (the embed's data-view); unset opens orbit outside the scene and walk inside it; walk falls back to that choice when the scene is not walkable
     nogaming?: boolean;                         // permanently disable gaming controls (and with them, pointer lock)
     nocontrols?: boolean;                       // detach all local input; camera is driven only by the interlink bridge
+    nochrome?: boolean;                         // hide the control bar and its panels; the host page provides its own controls over the bridge. Loading, the walk cursor and the touch joystick stay
     contentRotation?: [number, number, number]; // gsplat entity euler override (default [0, 0, 180]); interlink streamed datasets are baked upright and pass [0, 0, 0]
     qa?: boolean;                               // enables window.__interlinkQA deterministic stepping; never set on visitor pages
     interlink?: {                               // presence enables the interlink camera-sync bridge

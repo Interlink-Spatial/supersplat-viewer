@@ -33,6 +33,24 @@ const FOLLOW_MAX_PITCH = 85;
 // poses arrive at ~15 Hz; easing toward each one hides that cadence.
 const FOLLOW_EASE_RATE = 10;
 
+// A follower's look offset recentres on the guide's facing once the guide
+// starts moving, but only after the guest has left the view alone this long
+// (s) — a drag that pauses for a frame is still a drag.
+const FOLLOW_RESYNC_GRACE = 0.4;
+
+// How far (m) the guide must be ahead of the eased follow position to count
+// as moving. Standing still, the two converge to well under this.
+const FOLLOW_RESYNC_MOVE = 0.05;
+
+// Rail: rate (1/s) at which the camera closes on the host page's latest path
+// pose. Poses arrive once per host animation frame, which does not line up
+// with this page's frames; easing toward each one hides the beat between
+// them. A rail is joined at the lower rate and ramps up, so a camera that was
+// looking elsewhere swings onto the path instead of snapping to it.
+const RAIL_RATE = 12;
+const RAIL_JOIN_RATE = 2.5;
+const RAIL_RATE_RAMP = 1.5;
+
 // shortest signed difference between two angles, in degrees
 const angleDelta = (from: number, to: number) => ((((to - from) % 360) + 540) % 360) - 180;
 
@@ -92,11 +110,25 @@ class CameraManager {
     // ±yawLimit of the guide's facing, pitch within ±pitchLimit. Unlike the
     // remote drives above, local input never cancels it; the guest page
     // ends it with unfollow().
-    follow: (position: Vec3, target: Vec3, yawLimit?: number, pitchLimit?: number) => void;
+    //
+    // resyncAfter (s) brings a guest who has stopped looking around back to
+    // the guide's facing; 0 leaves their offset alone until the guide moves.
+    follow: (position: Vec3, target: Vec3, yawLimit?: number, pitchLimit?: number, resyncAfter?: number) => void;
 
     unfollow: () => void;
 
     following = false;
+
+    // Rail (interlink bridge): the host page moves the camera along a path
+    // it computes itself — a flythrough — one pose per frame. The camera
+    // rides the path in fly mode with no controller in the loop, so neither
+    // collision nor the walk floor spring can pull it off. Local input ends
+    // the rail where the camera is, as does a mode change.
+    rail: (position: Vec3, target: Vec3) => void;
+
+    endRail: () => void;
+
+    railing = false;
 
     // True while a damped remote follow (easeTo) is active. The bridge
     // suppresses outbound pose emission during easing so the eased copy
@@ -245,6 +277,12 @@ class CameraManager {
         const lookOffsetGoal = new Vec3();
         let followYawLimit = FOLLOW_DEFAULT_YAW_LIMIT;
         let followPitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT;
+        let followResyncAfter = 0;
+        let followIdle = 0;
+
+        // rail state: the host's latest path pose and the current ease rate
+        let railGoal: Camera | null = null;
+        let railRate = RAIL_JOIN_RATE;
 
         const easeInOutCubic = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
 
@@ -299,12 +337,49 @@ class CameraManager {
         };
 
         this.cancelRemote = () => {
-            if (remoteTween || remoteGoal) {
+            if (remoteTween || remoteGoal || railGoal) {
                 remoteTween = null;
                 remoteGoal = null;
+                railGoal = null;
+                this.railing = false;
                 this.remoteEasing = false;
                 this.snap();
             }
+        };
+
+        this.rail = (position: Vec3, targetPos: Vec3) => {
+            if (followGoal) {
+                return;
+            }
+            if (!railGoal) {
+                // The mode-change handler clears remote state, so switch
+                // before storing the goal. Fly, because the path runs through
+                // the air: walk would drop the camera to the floor the moment
+                // the rail ended, and orbit would swing it off the path.
+                exitAnimForRemote();
+                if (state.cameraMode !== 'fly') {
+                    state.cameraMode = 'fly';
+                }
+                remoteTween = null;
+                remoteGoal = null;
+                this.remoteEasing = false;
+                railRate = RAIL_JOIN_RATE;
+            }
+            const goal = railGoal ?? new Camera(this.camera);
+            goal.look(position, targetPos);
+            goal.fov = this.camera.fov;
+            railGoal = goal;
+            this.railing = true;
+            global.app.renderNextFrame = true;
+        };
+
+        this.endRail = () => {
+            if (!railGoal) {
+                return;
+            }
+            railGoal = null;
+            this.railing = false;
+            this.snap();
         };
 
         // Look-around is first-person: entering fly makes every input
@@ -312,9 +387,10 @@ class CameraManager {
         // drag convention (camera-centric mouse, direct-manipulation touch).
         const isFollowMode = (mode: CameraMode) => mode === 'fly' || mode === 'walk';
 
-        this.follow = (position: Vec3, targetPos: Vec3, yawLimit = FOLLOW_DEFAULT_YAW_LIMIT, pitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT) => {
+        this.follow = (position: Vec3, targetPos: Vec3, yawLimit = FOLLOW_DEFAULT_YAW_LIMIT, pitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT, resyncAfter = 0) => {
             followYawLimit = math.clamp(yawLimit, 0, 180);
             followPitchLimit = math.clamp(pitchLimit, 0, FOLLOW_MAX_PITCH);
+            followResyncAfter = Math.max(0, resyncAfter);
 
             const goal = followGoal ?? new Camera(this.camera);
             goal.look(position, targetPos);
@@ -329,10 +405,13 @@ class CameraManager {
                 }
                 remoteTween = null;
                 remoteGoal = null;
+                railGoal = null;
+                this.railing = false;
                 this.remoteEasing = false;
                 followBase.copy(goal);
                 lookOffset.set(0, 0, 0);
                 lookOffsetGoal.set(0, 0, 0);
+                followIdle = 0;
             }
 
             followGoal = goal;
@@ -364,10 +443,41 @@ class CameraManager {
                 }
                 return;
             }
+            if (railGoal) {
+                railRate += (RAIL_RATE - railRate) * (1 - Math.exp(-deltaTime * RAIL_RATE_RAMP));
+                const f = 1 - Math.exp(-deltaTime * railRate);
+                const { camera } = this;
+
+                // angles rather than Camera.lerp: that blends focus points,
+                // which pass through the camera when the two views face
+                // opposite ways
+                const moved = camera.position.distance(railGoal.position) > 1e-5 ||
+                    Math.abs(railGoal.angles.x - camera.angles.x) > 1e-4 ||
+                    Math.abs(angleDelta(camera.angles.y, railGoal.angles.y)) > 1e-4;
+                camera.position.lerp(camera.position, railGoal.position, f);
+                camera.angles.x += (railGoal.angles.x - camera.angles.x) * f;
+                camera.angles.y += angleDelta(camera.angles.y, railGoal.angles.y) * f;
+                camera.angles.z = 0;
+                camera.distance = math.lerp(camera.distance, railGoal.distance, f);
+                if (moved) {
+                    global.app.renderNextFrame = true;
+                }
+                return;
+            }
             if (followGoal) {
                 // position and facing come from the guide; only look input
                 // is honoured, and only inside the allowed cone
                 const { rotate } = frame.read();
+
+                // a guest who has stopped looking around is brought back to
+                // the guide's facing when the guide moves on, or after the
+                // host page's interval
+                followIdle = rotate[0] !== 0 || rotate[1] !== 0 ? 0 : followIdle + deltaTime;
+                const guideMoving = followIdle >= FOLLOW_RESYNC_GRACE &&
+                    followBase.position.distance(followGoal.position) > FOLLOW_RESYNC_MOVE;
+                if (guideMoving || (followResyncAfter > 0 && followIdle >= followResyncAfter)) {
+                    lookOffsetGoal.set(0, 0, 0);
+                }
                 lookOffsetGoal.x = math.clamp(lookOffsetGoal.x - rotate[1], -followPitchLimit, followPitchLimit);
                 lookOffsetGoal.y = math.clamp(lookOffsetGoal.y - rotate[0], -followYawLimit, followYawLimit);
                 lookOffset.lerp(lookOffset, lookOffsetGoal, damp(0.95, deltaTime));
@@ -519,6 +629,8 @@ class CameraManager {
         events.on('cameraMode:changed', (value: CameraMode, prev: CameraMode) => {
             remoteTween = null;
             remoteGoal = null;
+            railGoal = null;
+            this.railing = false;
             this.remoteEasing = false;
             sourcesByMode[prev]?.cancel();
 

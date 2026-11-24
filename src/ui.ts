@@ -762,6 +762,11 @@ const initUI = (global: Global) => {
         dom.ui.classList.add('hidden');
     }
 
+    // Interlink: the host page draws its own controls
+    if (config.nochrome) {
+        document.body.classList.add('interlink-nochrome');
+    }
+
     // tooltips
     const tooltip = new Tooltip(dom.tooltip);
 

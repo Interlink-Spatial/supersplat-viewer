@@ -11,7 +11,10 @@ import type { Viewer } from './viewer';
 //
 //   outbound:  interlink:camera-moved  { splat, pose: { position, target } }  (~15 Hz)
 //              interlink:user-input    { active }                             (100 ms idle debounce)
-//              interlink:mode-changed  { splat, mode, rawMode }
+//              interlink:mode-changed  { splat, mode, rawMode, walkAllowed }   on every change, and once
+//                                                                              when the scene has loaded
+//              interlink:rail-ended    {}                       a rail ended without rail-end: local
+//                                                               input or a mode change took the camera
 //   inbound:   interlink:set-camera    { pose }                 snap
 //              interlink:fly-to        { pose, duration? }      animated flight (emits during flight)
 //              interlink:ease-camera   { pose }                 damped follow; local input wins
@@ -20,10 +23,20 @@ import type { Viewer } from './viewer';
 //                                                               looks around, within lookLimit
 //                                                               { yaw, pitch } degrees either side
 //                                                               of the guide's facing (default
-//                                                               ±90 / ±75). Local input never
-//                                                               cancels it; a follow sent before the
-//                                                               scene loads is applied once it does.
+//                                                               ±90 / ±75). lookLimit.resync (s)
+//                                                               recentres a guest who has stopped
+//                                                               looking; a moving guide always does.
+//                                                               Local input never cancels it; a
+//                                                               follow sent before the scene loads
+//                                                               is applied once it does.
 //              interlink:unfollow      {}                       hand the camera back to local input
+//              interlink:rail          { pose }                 flythrough: ride a path the host
+//                                                               computes, one pose per host frame, in
+//                                                               fly mode with collision out of the
+//                                                               loop. Emits camera-moved throughout.
+//              interlink:rail-end      {}                       stop where the camera is
+//              interlink:set-mode      { mode }                 orbit | fly | walk (walk only where
+//                                                               the scene is walkable)
 //
 // Enabled when `config.interlink.splatId` is set. Registered from main()
 // after the Viewer is constructed; the camera manager only exists once the
@@ -35,7 +48,7 @@ const poseVec = new Vec3();
 const targetVec = new Vec3();
 
 const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
-    const { app, config, events } = global;
+    const { app, config, events, state } = global;
     const splatId = config.interlink?.splatId;
     if (!splatId) {
         return;
@@ -91,8 +104,25 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
     // Existing tour consumers only understand 'orbit' | 'walk'; the raw
     // viewer mode rides along for future use.
     const mapMode = (mode: CameraMode) => (mode === 'walk' || mode === 'fly' ? 'walk' : 'orbit');
-    events.on('cameraMode:changed', (mode: CameraMode) => {
-        post({ type: 'interlink:mode-changed', splat: splatId, mode: mapMode(mode), rawMode: mode });
+    const postMode = (mode: CameraMode) => {
+        post({
+            type: 'interlink:mode-changed',
+            splat: splatId,
+            mode: mapMode(mode),
+            rawMode: mode,
+            walkAllowed: state.walkAllowed
+        });
+    };
+    events.on('cameraMode:changed', postMode);
+
+    // The opening mode is set while the camera manager is constructed, before
+    // a host page could be told about it; announce it once the scene is up.
+    let announced = false;
+    app.on('update', () => {
+        if (!announced && viewer.cameraManager) {
+            announced = true;
+            postMode(state.cameraMode);
+        }
     });
 
     // --- outbound: user-input activity (gates guide soft-follow) ---
@@ -131,7 +161,7 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
 
     // --- inbound: remote camera drive ---
 
-    type LookLimit = { yaw?: number; pitch?: number };
+    type LookLimit = { yaw?: number; pitch?: number; resync?: number };
     type FollowRequest = { pose: Pose; lookLimit?: LookLimit };
 
     const followPos = new Vec3();
@@ -142,11 +172,13 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
         followTarget.set(target[0], target[1], target[2]);
         const yaw = request.lookLimit?.yaw;
         const pitch = request.lookLimit?.pitch;
+        const resync = request.lookLimit?.resync;
         manager.follow(
             followPos,
             followTarget,
             typeof yaw === 'number' ? yaw : undefined,
-            typeof pitch === 'number' ? pitch : undefined
+            typeof pitch === 'number' ? pitch : undefined,
+            typeof resync === 'number' ? resync : undefined
         );
     };
 
@@ -166,9 +198,41 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
         document.body.classList.toggle('interlink-follow', on);
     };
 
+    // --- outbound: a rail the host did not end ---
+
+    // Local input and mode changes take the camera off a rail inside the
+    // camera manager; the host is told so its play control can follow.
+    let railRequested = false;
+    app.on('update', () => {
+        if (railRequested && viewer.cameraManager && !viewer.cameraManager.railing) {
+            railRequested = false;
+            post({ type: 'interlink:rail-ended', splat: splatId });
+        }
+    });
+
     window.addEventListener('message', (event: MessageEvent) => {
-        const data = (event.data ?? {}) as { type?: string; pose?: Pose; duration?: number; lookLimit?: LookLimit };
+        const data = (event.data ?? {}) as {
+            type?: string;
+            pose?: Pose;
+            duration?: number;
+            lookLimit?: LookLimit;
+            mode?: string;
+        };
         const manager = viewer.cameraManager;
+
+        if (data.type === 'interlink:rail-end') {
+            railRequested = false;
+            manager?.endRail();
+            return;
+        }
+        if (data.type === 'interlink:set-mode') {
+            const { mode } = data;
+            if (manager && !manager.following &&
+                (mode === 'orbit' || mode === 'fly' || (mode === 'walk' && state.walkAllowed))) {
+                state.cameraMode = mode;
+            }
+            return;
+        }
 
         if (data.type === 'interlink:follow' && data.pose) {
             setFollowing(true);
@@ -204,6 +268,10 @@ const registerInterlinkBridge = (global: Global, viewer: Viewer) => {
                 break;
             case 'interlink:ease-camera':
                 manager.easeTo(poseVec, targetVec);
+                break;
+            case 'interlink:rail':
+                manager.rail(poseVec, targetVec);
+                railRequested = manager.railing;
                 break;
         }
     });

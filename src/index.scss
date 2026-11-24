@@ -907,3 +907,16 @@ body.interlink-follow {
         display: none !important;
     }
 }
+
+// Interlink host-drawn controls (chrome=0): a tour page has its own toolbar
+// and drives the camera mode over the bridge, so the control bar, its panels
+// and the branding link are hidden. The loading bar, walk hint and touch
+// joystick stay.
+body.interlink-nochrome {
+    #controlsWrap,
+    #settingsPanel,
+    #infoPanel,
+    #viewerBranding {
+        display: none !important;
+    }
+}
