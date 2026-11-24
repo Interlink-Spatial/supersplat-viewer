@@ -755,4 +755,11 @@ body.interlink-follow #frame {
   display: none !important;
 }
 
+body.interlink-nochrome #controlsWrap,
+body.interlink-nochrome #settingsPanel,
+body.interlink-nochrome #infoPanel,
+body.interlink-nochrome #viewerBranding {
+  display: none !important;
+}
+
 /*# sourceMappingURL=index.css.map */

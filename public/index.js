@@ -82473,7 +82473,7 @@ const observe = (events, target) => {
 const poseVec = new Vec3();
 const targetVec = new Vec3();
 const registerInterlinkBridge = (global, viewer) => {
-    const { app, config, events } = global;
+    const { app, config, events, state } = global;
     const splatId = config.interlink?.splatId;
     if (!splatId) {
         return;
@@ -82523,8 +82523,24 @@ const registerInterlinkBridge = (global, viewer) => {
     // Existing tour consumers only understand 'orbit' | 'walk'; the raw
     // viewer mode rides along for future use.
     const mapMode = (mode) => (mode === 'walk' || mode === 'fly' ? 'walk' : 'orbit');
-    events.on('cameraMode:changed', (mode) => {
-        post({ type: 'interlink:mode-changed', splat: splatId, mode: mapMode(mode), rawMode: mode });
+    const postMode = (mode) => {
+        post({
+            type: 'interlink:mode-changed',
+            splat: splatId,
+            mode: mapMode(mode),
+            rawMode: mode,
+            walkAllowed: state.walkAllowed
+        });
+    };
+    events.on('cameraMode:changed', postMode);
+    // The opening mode is set while the camera manager is constructed, before
+    // a host page could be told about it; announce it once the scene is up.
+    let announced = false;
+    app.on('update', () => {
+        if (!announced && viewer.cameraManager) {
+            announced = true;
+            postMode(state.cameraMode);
+        }
     });
     // --- outbound: user-input activity (gates guide soft-follow) ---
     const canvas = app.graphicsDevice.canvas;
@@ -82566,7 +82582,8 @@ const registerInterlinkBridge = (global, viewer) => {
         followTarget.set(target[0], target[1], target[2]);
         const yaw = request.lookLimit?.yaw;
         const pitch = request.lookLimit?.pitch;
-        manager.follow(followPos, followTarget, typeof yaw === 'number' ? yaw : undefined, typeof pitch === 'number' ? pitch : undefined);
+        const resync = request.lookLimit?.resync;
+        manager.follow(followPos, followTarget, typeof yaw === 'number' ? yaw : undefined, typeof pitch === 'number' ? pitch : undefined, typeof resync === 'number' ? resync : undefined);
     };
     // The guide may be standing still when a guest's scene finishes
     // loading, so no fresh pose would arrive to start the follow; the
@@ -82582,9 +82599,32 @@ const registerInterlinkBridge = (global, viewer) => {
         // hides the camera-mode buttons, which mean nothing while following
         document.body.classList.toggle('interlink-follow', on);
     };
+    // --- outbound: a rail the host did not end ---
+    // Local input and mode changes take the camera off a rail inside the
+    // camera manager; the host is told so its play control can follow.
+    let railRequested = false;
+    app.on('update', () => {
+        if (railRequested && viewer.cameraManager && !viewer.cameraManager.railing) {
+            railRequested = false;
+            post({ type: 'interlink:rail-ended', splat: splatId });
+        }
+    });
     window.addEventListener('message', (event) => {
         const data = (event.data ?? {});
         const manager = viewer.cameraManager;
+        if (data.type === 'interlink:rail-end') {
+            railRequested = false;
+            manager?.endRail();
+            return;
+        }
+        if (data.type === 'interlink:set-mode') {
+            const { mode } = data;
+            if (manager && !manager.following &&
+                (mode === 'orbit' || mode === 'fly' || (mode === 'walk' && state.walkAllowed))) {
+                state.cameraMode = mode;
+            }
+            return;
+        }
         if (data.type === 'interlink:follow' && data.pose) {
             setFollowing(true);
             if (manager) {
@@ -82618,6 +82658,10 @@ const registerInterlinkBridge = (global, viewer) => {
                 break;
             case 'interlink:ease-camera':
                 manager.easeTo(poseVec, targetVec);
+                break;
+            case 'interlink:rail':
+                manager.rail(poseVec, targetVec);
+                railRequested = manager.railing;
                 break;
         }
     });
@@ -84355,6 +84399,10 @@ const initUI = (global) => {
     // Hide all UI (poster, loading bar, controls)
     if (config.noui) {
         dom.ui.classList.add('hidden');
+    }
+    // Interlink: the host page draws its own controls
+    if (config.nochrome) {
+        document.body.classList.add('interlink-nochrome');
     }
     // tooltips
     const tooltip = new Tooltip(dom.tooltip);
@@ -86778,6 +86826,21 @@ const FOLLOW_MAX_PITCH = 85;
 // Rate (1/s) at which a follower closes on the guide's latest pose. Guide
 // poses arrive at ~15 Hz; easing toward each one hides that cadence.
 const FOLLOW_EASE_RATE = 10;
+// A follower's look offset recentres on the guide's facing once the guide
+// starts moving, but only after the guest has left the view alone this long
+// (s) — a drag that pauses for a frame is still a drag.
+const FOLLOW_RESYNC_GRACE = 0.4;
+// How far (m) the guide must be ahead of the eased follow position to count
+// as moving. Standing still, the two converge to well under this.
+const FOLLOW_RESYNC_MOVE = 0.05;
+// Rail: rate (1/s) at which the camera closes on the host page's latest path
+// pose. Poses arrive once per host animation frame, which does not line up
+// with this page's frames; easing toward each one hides the beat between
+// them. A rail is joined at the lower rate and ramps up, so a camera that was
+// looking elsewhere swings onto the path instead of snapping to it.
+const RAIL_RATE = 12;
+const RAIL_JOIN_RATE = 2.5;
+const RAIL_RATE_RAMP = 1.5;
 // shortest signed difference between two angles, in degrees
 const angleDelta = (from, to) => ((((to - from) % 360) + 540) % 360) - 180;
 // Walk mode is only enabled when the scene's horizontal footprint is large
@@ -86822,9 +86885,20 @@ class CameraManager {
     // ±yawLimit of the guide's facing, pitch within ±pitchLimit. Unlike the
     // remote drives above, local input never cancels it; the guest page
     // ends it with unfollow().
+    //
+    // resyncAfter (s) brings a guest who has stopped looking around back to
+    // the guide's facing; 0 leaves their offset alone until the guide moves.
     follow;
     unfollow;
     following = false;
+    // Rail (interlink bridge): the host page moves the camera along a path
+    // it computes itself — a flythrough — one pose per frame. The camera
+    // rides the path in fly mode with no controller in the loop, so neither
+    // collision nor the walk floor spring can pull it off. Local input ends
+    // the rail where the camera is, as does a mode change.
+    rail;
+    endRail;
+    railing = false;
     // True while a damped remote follow (easeTo) is active. The bridge
     // suppresses outbound pose emission during easing so the eased copy
     // doesn't echo back to the guide; fly-to intentionally still emits.
@@ -86948,6 +87022,11 @@ class CameraManager {
         const lookOffsetGoal = new Vec3();
         let followYawLimit = FOLLOW_DEFAULT_YAW_LIMIT;
         let followPitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT;
+        let followResyncAfter = 0;
+        let followIdle = 0;
+        // rail state: the host's latest path pose and the current ease rate
+        let railGoal = null;
+        let railRate = RAIL_JOIN_RATE;
         const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - ((-2 * t + 2) ** 3) / 2);
         // Remote drives operate on an interactive mode: leave anim first
         // (the mode-change handler clears remote state, so callers switch
@@ -86995,20 +87074,56 @@ class CameraManager {
             this.remoteEasing = true;
         };
         this.cancelRemote = () => {
-            if (remoteTween || remoteGoal) {
+            if (remoteTween || remoteGoal || railGoal) {
                 remoteTween = null;
                 remoteGoal = null;
+                railGoal = null;
+                this.railing = false;
                 this.remoteEasing = false;
                 this.snap();
             }
+        };
+        this.rail = (position, targetPos) => {
+            if (followGoal) {
+                return;
+            }
+            if (!railGoal) {
+                // The mode-change handler clears remote state, so switch
+                // before storing the goal. Fly, because the path runs through
+                // the air: walk would drop the camera to the floor the moment
+                // the rail ended, and orbit would swing it off the path.
+                exitAnimForRemote();
+                if (state.cameraMode !== 'fly') {
+                    state.cameraMode = 'fly';
+                }
+                remoteTween = null;
+                remoteGoal = null;
+                this.remoteEasing = false;
+                railRate = RAIL_JOIN_RATE;
+            }
+            const goal = railGoal ?? new Camera(this.camera);
+            goal.look(position, targetPos);
+            goal.fov = this.camera.fov;
+            railGoal = goal;
+            this.railing = true;
+            global.app.renderNextFrame = true;
+        };
+        this.endRail = () => {
+            if (!railGoal) {
+                return;
+            }
+            railGoal = null;
+            this.railing = false;
+            this.snap();
         };
         // Look-around is first-person: entering fly makes every input
         // device produce first-person look deltas, with each device's own
         // drag convention (camera-centric mouse, direct-manipulation touch).
         const isFollowMode = (mode) => mode === 'fly' || mode === 'walk';
-        this.follow = (position, targetPos, yawLimit = FOLLOW_DEFAULT_YAW_LIMIT, pitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT) => {
+        this.follow = (position, targetPos, yawLimit = FOLLOW_DEFAULT_YAW_LIMIT, pitchLimit = FOLLOW_DEFAULT_PITCH_LIMIT, resyncAfter = 0) => {
             followYawLimit = math.clamp(yawLimit, 0, 180);
             followPitchLimit = math.clamp(pitchLimit, 0, FOLLOW_MAX_PITCH);
+            followResyncAfter = Math.max(0, resyncAfter);
             const goal = followGoal ?? new Camera(this.camera);
             goal.look(position, targetPos);
             goal.fov = this.camera.fov;
@@ -87021,10 +87136,13 @@ class CameraManager {
                 }
                 remoteTween = null;
                 remoteGoal = null;
+                railGoal = null;
+                this.railing = false;
                 this.remoteEasing = false;
                 followBase.copy(goal);
                 lookOffset.set(0, 0, 0);
                 lookOffsetGoal.set(0, 0, 0);
+                followIdle = 0;
             }
             followGoal = goal;
             this.following = true;
@@ -87052,10 +87170,39 @@ class CameraManager {
                 }
                 return;
             }
+            if (railGoal) {
+                railRate += (RAIL_RATE - railRate) * (1 - Math.exp(-deltaTime * RAIL_RATE_RAMP));
+                const f = 1 - Math.exp(-deltaTime * railRate);
+                const { camera } = this;
+                // angles rather than Camera.lerp: that blends focus points,
+                // which pass through the camera when the two views face
+                // opposite ways
+                const moved = camera.position.distance(railGoal.position) > 1e-5 ||
+                    Math.abs(railGoal.angles.x - camera.angles.x) > 1e-4 ||
+                    Math.abs(angleDelta(camera.angles.y, railGoal.angles.y)) > 1e-4;
+                camera.position.lerp(camera.position, railGoal.position, f);
+                camera.angles.x += (railGoal.angles.x - camera.angles.x) * f;
+                camera.angles.y += angleDelta(camera.angles.y, railGoal.angles.y) * f;
+                camera.angles.z = 0;
+                camera.distance = math.lerp(camera.distance, railGoal.distance, f);
+                if (moved) {
+                    global.app.renderNextFrame = true;
+                }
+                return;
+            }
             if (followGoal) {
                 // position and facing come from the guide; only look input
                 // is honoured, and only inside the allowed cone
                 const { rotate } = frame.read();
+                // a guest who has stopped looking around is brought back to
+                // the guide's facing when the guide moves on, or after the
+                // host page's interval
+                followIdle = rotate[0] !== 0 || rotate[1] !== 0 ? 0 : followIdle + deltaTime;
+                const guideMoving = followIdle >= FOLLOW_RESYNC_GRACE &&
+                    followBase.position.distance(followGoal.position) > FOLLOW_RESYNC_MOVE;
+                if (guideMoving || (followResyncAfter > 0 && followIdle >= followResyncAfter)) {
+                    lookOffsetGoal.set(0, 0, 0);
+                }
                 lookOffsetGoal.x = math.clamp(lookOffsetGoal.x - rotate[1], -followPitchLimit, followPitchLimit);
                 lookOffsetGoal.y = math.clamp(lookOffsetGoal.y - rotate[0], -followYawLimit, followYawLimit);
                 lookOffset.lerp(lookOffset, lookOffsetGoal, damp(0.95, deltaTime));
@@ -87199,6 +87346,8 @@ class CameraManager {
         events.on('cameraMode:changed', (value, prev) => {
             remoteTween = null;
             remoteGoal = null;
+            railGoal = null;
+            this.railing = false;
             this.remoteEasing = false;
             sourcesByMode[prev]?.cancel();
             // a follower stays first-person (mode shortcuts and the mode
